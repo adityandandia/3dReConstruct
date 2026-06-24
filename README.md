@@ -1,2 +1,2 @@
-this is the project
+this is the 3d reconstruction project
 

@@ -6,3 +6,6 @@ __pycache__/
 dist/
 build/
 .DS_Store
+*.apk
+3dappv0.1.2_BackUpThisFolder_ButDontShipItWithYourGame/
+subcheck.py

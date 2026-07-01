@@ -6,7 +6,7 @@ from backend.tasks import run_pipeline, run_pipeline_from_images
 
 router = APIRouter()
 WORKSPACE = Path("/home/cave/3dapp/workspace")
-BACKEND_URL = "https://glazing-chaperone-bazooka.ngrok-free.dev"
+BACKEND_URL = "https://upset-eyes-roll.loca.lt"
 jobs = {}
 
 @router.post("/upload")
@@ -43,23 +43,26 @@ async def get_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"status": jobs[job_id]}
 
-@router.get("/download/{job_id}/ply")
-def download_ply(job_id: str):
-    if job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if jobs[job_id] != "done":
-        raise HTTPException(status_code=400, detail="Job not complete yet")
-    ply_path = WORKSPACE / job_id / "point_cloud.ply"
-    if not ply_path.exists():
-        raise HTTPException(status_code=404, detail="PLY file not found")
+# 1. New route to download the .sog file
+@router.get("/download/{job_id}/sog")
+def download_sog(job_id: str):
+    sog_path = WORKSPACE / job_id / "optimized_scene.sog"
+    
+    if not sog_path.exists():
+        raise HTTPException(status_code=404, detail="Optimized file not found")
+        
     return FileResponse(
-        path=str(ply_path),
+        path=str(sog_path),
         media_type="application/octet-stream",
-        filename="scene.ply"
+        headers={
+            "Content-Disposition": "inline; filename=scene.sog",
+            "Cache-Control": "no-cache"
+        }
     )
 
+# 2. Update the view route to point SuperSplat to the new .sog endpoint
 @router.get("/view/{job_id}")
 def view_splat(job_id: str):
-    ply_url = f"{BACKEND_URL}/download/{job_id}/ply"
-    redirect_url = f"https://playcanvas.com/supersplat/editor?load={ply_url}"
-    return RedirectResponse(url=redirect_url)
+    # This tells SuperSplat to load the optimized .sog file instead of the raw .ply
+    sog_url = f"{BACKEND_URL}/download/{job_id}/sog"
+    return RedirectResponse(url=f"https://playcanvas.com/supersplat/viewer?load={sog_url}")

@@ -5,7 +5,6 @@ import struct
 import numpy as np
 from pathlib import Path
 import sys
-import subprocess
 
 # ── scikit-learn: DBSCAN (density-based floater removal)
 from sklearn.cluster import DBSCAN
@@ -446,10 +445,25 @@ def run_pipeline(job_id: str, video_path: Path, session_dir: Path, jobs: dict):
             "-m", str(output_dir),
             "--iterations", "10000"
         ], fastgs_dir)
-
+        
         raw_ply     = output_dir / "point_cloud" / "iteration_10000" / "point_cloud.ply"
         cleaned_ply = session_dir / "point_cloud.ply"
+        
+        # 1. Clean the raw output
         clean_splat(raw_ply, cleaned_ply)
+
+        # 2. Compress the cleaned output to .sog using SplatTransform
+        sog_path = session_dir / "optimized_scene.sog"
+        print("Starting SplatTransform compression...")
+        try:
+            subprocess.run([
+                "splat-transform", 
+                str(cleaned_ply), 
+                str(sog_path)
+            ], check=True)
+            print(f"Optimization complete. Saved to: {sog_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"Optimization failed: {e}")
 
         jobs[job_id] = "done"
         return cleaned_ply
@@ -521,7 +535,22 @@ def run_pipeline_from_images(job_id: str, session_dir: Path, jobs: dict):
 
         raw_ply     = output_dir / "point_cloud" / "iteration_10000" / "point_cloud.ply"
         cleaned_ply = session_dir / "point_cloud.ply"
+        
+        # 1. Clean the raw output
         clean_splat(raw_ply, cleaned_ply)
+
+        # 2. Compress the cleaned output to .sog using SplatTransform
+        sog_path = session_dir / "optimized_scene.sog"
+        print("Starting SplatTransform compression...")
+        try:
+            subprocess.run([
+                "splat-transform", 
+                str(cleaned_ply), 
+                str(sog_path)
+            ], check=True)
+            print(f"Optimization complete. Saved to: {sog_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"Optimization failed: {e}")
 
         jobs[job_id] = "done"
         return cleaned_ply

@@ -315,6 +315,7 @@ step "Writing resolved environment (.env.generated)"
 cat > "$ENV_FILE" <<EOF
 FASTGS_DIR=$FASTGS_DIR
 FASTGS_PYTHON=$FASTGS_PYTHON_BIN
+BACKEND_URL=http://$LAN_IP:$PORT
 EOF
 log "Wrote $ENV_FILE"
 warn "Requires the tasks.py portability patch: read FASTGS_DIR/FASTGS_PYTHON from os.environ."

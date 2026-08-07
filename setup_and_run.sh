@@ -182,6 +182,15 @@ else
     COMPAT_FAIL=1
 fi
 
+# nvcc / CUDA toolkit check — driver presence (nvidia-smi) alone is not
+# enough to compile FastGS's custom CUDA rasterizer extensions in Step 5.
+if command -v nvcc >/dev/null 2>&1; then
+    log "nvcc found: $(nvcc --version | tail -1)"
+else
+    warn "nvcc not found — CUDA toolkit may be missing (driver alone isn't enough to compile CUDA extensions)."
+    COMPAT_FAIL=1
+fi
+
 if (( COMPAT_FAIL == 1 )); then
     if (( FORCE == 1 )); then
         warn "Compatibility issues found, continuing anyway (--force)."
@@ -212,6 +221,7 @@ check_or_install git    git    git    git    git
 check_or_install ffmpeg ffmpeg ffmpeg ffmpeg ffmpeg
 check_or_install cmake  cmake  cmake  cmake  cmake
 check_or_install curl   curl   curl   curl   curl
+check_or_install gcc    gcc    gcc    gcc    gcc
 
 if ! command -v colmap >/dev/null 2>&1; then
     warn "colmap not found — installing..."
@@ -219,6 +229,17 @@ if ! command -v colmap >/dev/null 2>&1; then
     command -v colmap >/dev/null 2>&1 && log "colmap installed." || { err "colmap missing — build from https://colmap.github.io/install.html"; exit 1; }
 else
     log "colmap found: $(command -v colmap)"
+fi
+
+# ngrok — used by config.py's auto-detection for the phone-facing tunnel
+# URL. Not started automatically here (requires an authtoken), just
+# checked for and flagged if missing so the operator knows to install it.
+if ! command -v ngrok >/dev/null 2>&1; then
+    warn "ngrok not found — phone/remote clients won't be able to reach this server"
+    warn "unless BACKEND_URL is set to a reachable LAN IP. Install from https://ngrok.com/download"
+    warn "and run 'ngrok http $PORT' separately if you need remote access."
+else
+    log "ngrok found: $(command -v ngrok)"
 fi
 
 # ============================================================
@@ -269,9 +290,25 @@ if [[ -f "$BACKEND_DIR/requirements.txt" ]]; then
     log "backend/requirements.txt installed"
 else
     warn "backend/requirements.txt missing — installing minimal known deps"
-    pip install fastapi uvicorn python-multipart numpy scipy scikit-learn
+    pip install fastapi uvicorn python-multipart numpy scipy scikit-learn requests
 fi
 deactivate
+
+# splat-transform — external CLI called by clean_splat() at the end of the
+# pipeline. Not part of pip/apt; check separately and install via npm if
+# Node.js is present, otherwise just warn (tasks.py already tolerates this
+# failing, but it fails silently, so flag it here instead).
+if ! command -v splat-transform >/dev/null 2>&1; then
+    warn "splat-transform not found — final .sog compression step will silently fail."
+    if command -v npm >/dev/null 2>&1; then
+        warn "Installing splat-transform via npm..."
+        npm install -g splat-transform || warn "splat-transform install failed — install manually."
+    else
+        warn "npm not found — install Node.js, then 'npm install -g splat-transform' manually."
+    fi
+else
+    log "splat-transform found: $(command -v splat-transform)"
+fi
 
 # ============================================================
 # STEP 5 — FastGS submodule + isolated env

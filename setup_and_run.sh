@@ -312,6 +312,11 @@ log "FastGS interpreter: $FASTGS_PYTHON_BIN"
 # ============================================================
 step "Writing resolved environment (.env.generated)"
 
+HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-8000}"
+LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[[ -z "$LAN_IP" ]] && LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "127.0.0.1")
+
 cat > "$ENV_FILE" <<EOF
 FASTGS_DIR=$FASTGS_DIR
 FASTGS_PYTHON=$FASTGS_PYTHON_BIN
@@ -333,9 +338,6 @@ step "Starting backend server"
 source "$VENV_DIR/bin/activate"
 cd "$BACKEND_DIR"
 
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8000}"
-LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [[ -z "$LAN_IP" ]] && LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "127.0.0.1")
 
 log "Server will accept video uploads at:  http://$LAN_IP:$PORT/upload"

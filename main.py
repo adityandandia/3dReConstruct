@@ -5,7 +5,8 @@ from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import uvicorn
-
+from backend.api_routes import jobs
+from backend.persistence import load_all_jobs
 from backend.api_routes import router
 from backend.tasks import run_pipeline
 
@@ -22,6 +23,12 @@ app.add_middleware(
 BASE_WORKSPACE = Path("/home/cave/3dapp/workspace")
 
 app.include_router(router)
+
+
+
+@app.on_event("startup")
+async def startup_event():
+    load_all_jobs(jobs)
 
 @app.post("/upload")
 async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 import uuid
 import shutil
 import os
@@ -8,6 +8,12 @@ import json
 import torch
 from pathlib import Path
 from backend.tasks import run_pipeline, run_pipeline_from_images
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from io import BytesIO
+from backend.persistence import load_all_jobs
 
 router = APIRouter(prefix="/api")
 
@@ -163,7 +169,6 @@ async def get_all_jobs():
 
     return response_list
 
-
 @router.get("/audit/{job_id}")
 def get_audit_log(job_id: str):
     if job_id not in jobs:
@@ -187,6 +192,114 @@ def get_metrics(job_id: str):
             detail="Metrics not available — job may still be processing or PSNR/SSIM evaluation was skipped."
         )
     return metrics
+    
+def _format_field_name(key: str) -> str:
+    return key.replace("_", " ").title()
+    	
+    	
+def _format_value(value) -> str:
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def _flatten_metrics(metrics: dict) -> list[tuple[str, str]]:
+    rows = []
+    for k, v in metrics.items():
+        if isinstance(v, dict):
+            # flatten nested dicts (e.g. colmap) into their own labeled sub-rows
+            for sub_k, sub_v in v.items():
+                label = f"{_format_field_name(k)} — {_format_field_name(sub_k)}"
+                rows.append((label, _format_value(sub_v)))
+        else:
+            rows.append((_format_field_name(k), _format_value(v)))
+    return rows
+
+def _build_pdf(title: str, job_id: str, rows: list[tuple[str, str]]) -> bytes:
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter)
+    styles = getSampleStyleSheet()
+    cell_style = styles["Normal"]
+    cell_style.fontSize = 9
+
+    elements = [
+        Paragraph(f"SplatStudio — {title}", styles["Title"]),
+        Paragraph(f"Job ID: {job_id}", styles["Normal"]),
+        Spacer(1, 16),
+    ]
+
+    header = [Paragraph("<b>Field</b>", cell_style), Paragraph("<b>Value</b>", cell_style)]
+    table_data = [header] + [
+        [Paragraph(str(k), cell_style), Paragraph(str(v), cell_style)] for k, v in rows
+    ]
+
+    table = Table(table_data, colWidths=[160, 320])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#161B22")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#30363D")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F0F0F0")]),
+    ]))
+    elements.append(table)
+    doc.build(elements)
+    return buf.getvalue()
+
+
+@router.get("/metrics/{job_id}/report")
+def download_metrics_report(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    metrics = jobs[job_id].get("metrics")
+    if not metrics:
+        raise HTTPException(
+            status_code=404,
+            detail="Metrics not available — job may still be processing or PSNR/SSIM evaluation was skipped."
+        )
+
+    rows = _flatten_metrics(metrics)
+    pdf_bytes = _build_pdf("Quality Metrics", job_id, rows)
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{job_id}_quality_metrics.pdf"'},
+    )
+
+
+@router.get("/audit/{job_id}/report")
+def download_audit_report(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    log_path = WORKSPACE / job_id / "removed_points.json"
+    if not log_path.exists():
+        raise HTTPException(
+            status_code=404, detail="Audit log not found — job may still be processing."
+        )
+    with open(log_path, "r") as f:
+        audit_entries = json.load(f)
+
+    rows = []
+    # audit_entries is the same list/dict structure your Audit Log modal renders —
+    # adjust key names below only if they differ from what's shown on screen.
+    entries = audit_entries if isinstance(audit_entries, list) else audit_entries.get("entries", [])
+    for entry in entries:
+        stage = entry.get("stage", "")
+        timestamp = entry.get("timestamp", "")
+        rows.append((f"{stage}", timestamp))
+        rows.append(("  Reason", str(entry.get("reason", ""))))
+        rows.append(("  Points Removed", str(entry.get("points_removed", ""))))
+        rows.append(("  Threshold", str(entry.get("threshold", ""))))
+
+    pdf_bytes = _build_pdf("Audit Log", job_id, rows)
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{job_id}_audit_log.pdf"'},
+    )
 
 
 # Kept for backwards compatibility with anything still calling the old route.
@@ -212,6 +325,56 @@ def download_ply(job_id: str):
         headers={"Content-Disposition": "inline"},
     )
 
+
+@router.get("/download/{job_id}/point_cloud.ply/export")
+def export_ply(job_id: str):
+    """Same file as download_ply, but forces a browser/app download
+    instead of inline rendering — for users who want to manually
+    edit/clean the splat in an external tool."""
+    ply_path = WORKSPACE / job_id / "point_cloud.ply"
+
+    if not ply_path.exists():
+        raise HTTPException(status_code=404, detail="Cleaned point cloud file (.ply) not found")
+
+    return FileResponse(
+        path=str(ply_path),
+        media_type="application/octet-stream",
+        filename=f"{job_id}.ply",
+        headers={"Content-Disposition": f'attachment; filename="{job_id}.ply"'},
+    )
+
+# --- Job persistence ---
+
+def _job_meta_path(job_id: str) -> Path:
+    return WORKSPACE / job_id / "job_meta.json"
+
+
+def save_job(job_id: str):
+    """Call this any time jobs[job_id] is updated, so it survives restarts."""
+    if job_id not in jobs:
+        return
+    meta_path = _job_meta_path(job_id)
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(meta_path, "w") as f:
+        json.dump(jobs[job_id], f)
+
+
+def load_all_jobs():
+    """Call once on server startup to repopulate the in-memory jobs dict."""
+    if not WORKSPACE.exists():
+        return
+    for job_dir in WORKSPACE.iterdir():
+        if not job_dir.is_dir():
+            continue
+        meta_path = job_dir / "job_meta.json"
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r") as f:
+                    job_data = json.load(f)
+                jobs[job_data["id"]] = job_data
+            except Exception:
+                continue  # skip corrupted/partial job folders
+                
 
 # View route returning the lightweight self-contained Three.js 3D renderer.
 # This is what gets exposed as `modelUrl` once a job is done.

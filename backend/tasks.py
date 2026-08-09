@@ -5,7 +5,7 @@ import struct
 import numpy as np
 from pathlib import Path
 import sys
-
+from backend.persistence import save_job
 from backend import metrics as m
 from backend.cleanup import audit_log
 from backend.cleanup.statistical_filters import filter_opacity_mad
@@ -93,8 +93,6 @@ def copy_sparse_txt(dense_dir: Path):
 def _set(jobs: dict, job_id: str, status: str = None, progress: int = None, **extra):
     existing = jobs.get(job_id)
     if not isinstance(existing, dict):
-        # Preserve whatever we can if there was a prior dict-like record;
-        # otherwise start a minimal fresh record.
         jobs[job_id] = {
             "id": job_id,
             "title": None,
@@ -102,13 +100,14 @@ def _set(jobs: dict, job_id: str, status: str = None, progress: int = None, **ex
             "progress": 0,
             "modelUrl": None,
         }
-
     if status is not None:
         jobs[job_id]["status"] = status
     if progress is not None:
         jobs[job_id]["progress"] = progress
     if extra:
         jobs[job_id].update(extra)
+
+    save_job(jobs, job_id)   # <-- now takes jobs dict + job_id
 
 def _gather_quality_metrics(session_dir: Path, dense_dir: Path, output_dir: Path):
     metrics = {}
